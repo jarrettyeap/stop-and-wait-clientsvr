@@ -55,7 +55,6 @@ class FileReceiver {
         byte[] fileInfo = packet.getData();
         long receivedCS = ByteBuffer.wrap(fileInfo, 0, 8).getLong();
         int seqNo = ByteBuffer.wrap(fileInfo, 8, 4).getInt();
-        System.out.println("Received ACK " + seqNo);
         byte[] content = new byte[packet.getLength() - HEADER_SIZE];
         System.arraycopy(fileInfo, HEADER_SIZE, content, 0, content.length);
 
@@ -86,7 +85,6 @@ class FileReceiver {
           DatagramPacket ackPkt = new DatagramPacket(buffer.array(), buffer.array().length,
                                                      senderAddress, senderPort);
           socket.send(ackPkt);
-          System.out.println("Sent ACK");
         } else if (seqNo == currentPacket - 1) {
            /* Return ack */
           InetAddress senderAddress = packet.getAddress();
@@ -98,7 +96,6 @@ class FileReceiver {
           DatagramPacket ackPkt = new DatagramPacket(buffer.array(), buffer.array().length,
                                                      senderAddress, senderPort);
           socket.send(ackPkt);
-          System.out.println("Sent ACK");
         }
       }
       bos.close();

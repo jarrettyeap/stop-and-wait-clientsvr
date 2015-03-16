@@ -45,12 +45,11 @@ class FileSender {
       /* Setup socket and receiver's information */
       int portNum = Integer.parseInt(port);
       socket = new DatagramSocket();
-      socket.setSoTimeout(10);
+      socket.setSoTimeout(5);
       InetAddress IPAddress = InetAddress.getByName("localhost");
 
       /* Pre-process the file into a 2-D byte array for easy reference */
       splitFileIntoByte(fileToOpen);
-      System.out.println(fileToOpen);
       /* Generate CRC for fileName and sequence numbers */
       String fileInfo = rcvFileName + ";" + noOfSequences;
       byte[] fileArray = fileInfo.getBytes();
@@ -71,8 +70,6 @@ class FileSender {
       boolean isCompleted = false;
       int currentPacket = -1;
 
-      System.out.println("Sending " + currentPacket + " " + getCRC(fileArray));
-
       while (!isCompleted) {
         /* Receive ACK from previous sequence*/
         byte[] ackData = new byte[ACK_SIZE];
@@ -80,7 +77,6 @@ class FileSender {
         boolean timeOut = false;
         try {
           socket.receive(ackPacket);
-          System.out.println("Received ACK");
         } catch (SocketTimeoutException e) {
           timeOut = true;
         }
@@ -108,13 +104,11 @@ class FileSender {
             packetBuffer.put(packetStorage[currentPacket]);
             packet.setData(packetBuffer.array());
             socket.send(packet);
-            System.out.println("Sending " + currentPacket);
             byte[] content = new byte[packet.getLength() - HEADER_SIZE];
             System.arraycopy(packet.getData(), HEADER_SIZE, content, 0, content.length);
           }
         } else {
           socket.send(packet);
-          System.out.println("Sending " + currentPacket);
         }
       }
     } catch (IOException e) {
