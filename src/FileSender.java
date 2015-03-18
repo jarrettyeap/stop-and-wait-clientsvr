@@ -12,21 +12,15 @@ import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.SocketTimeoutException;
 import java.nio.ByteBuffer;
+import java.util.Arrays;
 import java.util.zip.CRC32;
 import java.util.zip.Checksum;
 
 class FileSender {
 
-  public DatagramSocket socket;
-  public DatagramPacket packet;
-
-  private static final int FILE_PACKET_SIZE = 988;
-  private static final int HEADER_SIZE = 12;
-  private static final int PACKET_SIZE = FILE_PACKET_SIZE + HEADER_SIZE;
+  private static final int FILE_PACKET_SIZE = 992;
+  private static final int HEADER_SIZE = 8;
   private static final int ACK_SIZE = 8;
-
-  private byte[][] packetStorage;
-  private int noOfSequences;
 
   public static void main(String[] args) {
     // check if the number of command line argument is 4
@@ -40,75 +34,65 @@ class FileSender {
   }
 
   public FileSender(String fileToOpen, String port, String rcvFileName) {
+    long startTime = System.currentTimeMillis();
     try {
+      File fileToTransfer = new File(fileToOpen);
+      long byteToRead = fileToTransfer.length();
+      int noOfSequences = (int) Math.ceil(byteToRead / (double) FILE_PACKET_SIZE);
+
+      FileInputStream fis = new FileInputStream(fileToTransfer);
+      BufferedInputStream bis = new BufferedInputStream(fis);
 
       /* Setup socket and receiver's information */
       int portNum = Integer.parseInt(port);
-      socket = new DatagramSocket();
-      socket.setSoTimeout(5);
+      DatagramSocket socket = new DatagramSocket();
+      socket.setSoTimeout(1);
       InetAddress IPAddress = InetAddress.getByName("localhost");
+      byte[] packetBacker = new byte[FILE_PACKET_SIZE + HEADER_SIZE];
+      byte[] ackData = new byte[ACK_SIZE];
+      byte[] seqBuffer = new byte[4];
+      DatagramPacket ackPacket = new DatagramPacket(ackData, ackData.length);
+      int currentPacket = -1;
 
-      /* Pre-process the file into a 2-D byte array for easy reference */
-      splitFileIntoByte(fileToOpen);
       /* Generate CRC for fileName and sequence numbers */
       String fileInfo = rcvFileName + ";" + noOfSequences;
       byte[] fileArray = fileInfo.getBytes();
+      ByteBuffer buffer = ByteBuffer.wrap(packetBacker);
+      buffer.put(getCRC(fileArray, 0, fileArray.length)).putInt(-1).put(fileArray);
+      DatagramPacket packet = new DatagramPacket(packetBacker, fileArray.length + HEADER_SIZE,
+                                                 IPAddress, portNum);
 
-      /* Put header into buffer */
-      ByteBuffer buffer = ByteBuffer.allocate(fileArray.length + HEADER_SIZE).
-          putLong(getCRC(fileArray)).putInt(-1);
+      while (true) {
+        /* Send Packet */
+        socket.send(packet);
 
-      /* Put content into buffer */
-      buffer.put(fileArray);
-
-      /* Send file information packet */
-      byte[] packetArray = buffer.array();
-      packet = new DatagramPacket(packetArray, packetArray.length, IPAddress, portNum);
-      socket.send(packet);
-
-      /* rdt version 3 algorithm */
-      boolean isCompleted = false;
-      int currentPacket = -1;
-
-      while (!isCompleted) {
-        /* Receive ACK from previous sequence*/
-        byte[] ackData = new byte[ACK_SIZE];
-        DatagramPacket ackPacket = new DatagramPacket(ackData, ackData.length);
-        boolean timeOut = false;
+        /* Receive Packet */
         try {
           socket.receive(ackPacket);
-        } catch (SocketTimeoutException e) {
-          timeOut = true;
-        }
+          /* If its the correct ack packet */
+          if (isACK(ackPacket, currentPacket)) {
+            currentPacket++;
+            if (currentPacket == noOfSequences) { /* If last ack packet is correct, exit */
+              long stopTime = System.currentTimeMillis();
+              long elapsedTime = stopTime - startTime;
+              System.out.println(elapsedTime);
+              bis.close();
+              System.exit(0);
+            } else {
+              /* Prepare payload and send next packet */
+              int byteRead = bis.read(packetBacker, HEADER_SIZE, FILE_PACKET_SIZE);
 
-        /* Logic process for acknowledgement */
-        boolean isAck = false;
-        if (timeOut) {
-          isAck = false;
-        } else {
-          isAck = isACK(ackPacket, currentPacket);
-        }
+              if (byteRead == -1) {
+                byteRead = (int) byteToRead;
+              }
 
-         /* If its the correct ack packet */
-        if (isAck) {
-          currentPacket++;
-          if (currentPacket == noOfSequences) { /* If finish sending, exit loop */
-            isCompleted = true;
-          } else {
-            /* Send next packet */
-            /* Put header into buffer */
-            ByteBuffer packetBuffer = ByteBuffer.allocate(packetStorage[currentPacket].length
-                                                          + HEADER_SIZE);
-            packetBuffer.putLong(getCRC(packetStorage[currentPacket]));
-            packetBuffer.putInt(currentPacket);
-            packetBuffer.put(packetStorage[currentPacket]);
-            packet.setData(packetBuffer.array());
-            socket.send(packet);
-            byte[] content = new byte[packet.getLength() - HEADER_SIZE];
-            System.arraycopy(packet.getData(), HEADER_SIZE, content, 0, content.length);
+              System.arraycopy(getCRC(packetBacker, HEADER_SIZE, byteRead), 0, packetBacker, 0, 4);
+              byte[] seqByte = ByteBuffer.wrap(seqBuffer).putInt(currentPacket).array();
+              System.arraycopy(seqByte, 0, packetBacker, 4, 4);
+              packet.setData(packetBacker, 0, byteRead + HEADER_SIZE);
+            }
           }
-        } else {
-          socket.send(packet);
+        } catch (SocketTimeoutException e) {
         }
       }
     } catch (IOException e) {
@@ -118,53 +102,21 @@ class FileSender {
 
   private boolean isACK(DatagramPacket p, int packetNumber) {
     int seqNumber = ByteBuffer.wrap(p.getData(), 0, 4).getInt();
-    int purityBit = ByteBuffer.wrap(p.getData(), 4, 4).getInt();
-
-      /* Even parity bit scheme */
-    if (((seqNumber + purityBit) % 2) == 0) {
-      return seqNumber == packetNumber;
-    } else {
-      return false;
-    }
-  }
-
-  private boolean splitFileIntoByte(String fileName) {
-    try {
-      File fileToTransfer = new File(fileName);
-      int iterator = 0;
-      noOfSequences = (int) Math.ceil(fileToTransfer.length() / (double) FILE_PACKET_SIZE);
-      packetStorage = new byte[noOfSequences][];
-
-      FileInputStream fis = new FileInputStream(fileToTransfer);
-      BufferedInputStream bis = new BufferedInputStream(fis);
-
-      long byteToRead = fileToTransfer.length();
-      long readBytes = 0;
-      while (bis.available() > 0) {
-        if (byteToRead - readBytes >= FILE_PACKET_SIZE) {
-          packetStorage[iterator] = new byte[FILE_PACKET_SIZE];
-          bis.read(packetStorage[iterator++], 0, FILE_PACKET_SIZE);
-          readBytes += FILE_PACKET_SIZE;
-        } else {
-          packetStorage[iterator] = new byte[(int) (byteToRead - readBytes)];
-          bis.read(packetStorage[iterator++], 0, (int) (byteToRead - readBytes));
-          readBytes += (int) (byteToRead - readBytes);
-        }
-      }
-
-      bis.close();
-      return true;
-    } catch (Exception e) {
-      System.out.println("Error splitting file into byte arrays");
-      e.printStackTrace();
-      return false;
-    }
+    byte[] receivedCS = Arrays.copyOfRange(p.getData(), 4, 8);
+    return Arrays.equals(getCRC(p.getData(), 0, 4), receivedCS) && seqNumber == packetNumber;
   }
 
   /* Method used to return CRC of a byte array */
-  private long getCRC(byte[] byteArray) {
+  private byte[] getCRC(byte[] byteArray, int offset, int length) {
     Checksum cs = new CRC32();
-    cs.update(byteArray, 0, byteArray.length);
-    return cs.getValue();
+    cs.update(byteArray, offset, length);
+    return longToBytes(cs.getValue());
+  }
+
+  private static ByteBuffer tempBuffer = ByteBuffer.allocate(8);
+
+  public static byte[] longToBytes(long x) {
+    tempBuffer.putLong(0, x);
+    return Arrays.copyOfRange(tempBuffer.array(), 4, 8);
   }
 }
