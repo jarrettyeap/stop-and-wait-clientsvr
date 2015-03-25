@@ -34,7 +34,6 @@ class FileSender {
   }
 
   public FileSender(String fileToOpen, String port, String rcvFileName) {
-    long startTime = System.currentTimeMillis();
     try {
       File fileToTransfer = new File(fileToOpen);
       long byteToRead = fileToTransfer.length();
@@ -73,9 +72,6 @@ class FileSender {
           if (isACK(ackPacket, currentPacket)) {
             currentPacket++;
             if (currentPacket == noOfSequences) { /* If last ack packet is correct, exit */
-              long stopTime = System.currentTimeMillis();
-              long elapsedTime = stopTime - startTime;
-              System.out.println(elapsedTime);
               bis.close();
               System.exit(0);
             } else {
@@ -84,6 +80,8 @@ class FileSender {
 
               if (byteRead == -1) {
                 byteRead = (int) byteToRead;
+              } else {
+                byteToRead -= FILE_PACKET_SIZE;
               }
 
               System.arraycopy(getCRC(packetBacker, HEADER_SIZE, byteRead), 0, packetBacker, 0, 4);

@@ -31,6 +31,7 @@ class FileReceiver {
 
   private int noOfSequences;
   private byte[] ackBacker;
+  private DatagramPacket ackPkt;
 
   private FileOutputStream fos;
   private BufferedOutputStream bos;
@@ -107,8 +108,11 @@ class FileReceiver {
 
     /* Put header into buffer */
     ByteBuffer buffer = ByteBuffer.wrap(ackBacker).putInt(ackNo).put(getCRC(ackBacker, 0, 4));
-    DatagramPacket ackPkt = new DatagramPacket(buffer.array(), buffer.array().length,
-                                               senderAddress, senderPort);
+    if (ackPkt == null) {
+      ackPkt = new DatagramPacket(buffer.array(), buffer.array().length,
+                                  senderAddress, senderPort);
+    }
+
     socket.send(ackPkt);
   }
 
